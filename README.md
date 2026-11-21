@@ -73,4 +73,5 @@ time within the brief, right weekday, reply language, message cap.
 | `login.py` | one-time QR login, saves `agent_session.session` (git-ignored) |
 | `scenarios.json` | fixed manager scripts for quick offline checks |
 | `stress_test.py` | adaptive LLM manager personas with code-level checks |
+| `voice_test.py` | voice edge cases: silence, mis-tap, noise, Russian speech, replies in en/ru/uk |
 | `decisions.log` | decision log of the real conversation |
