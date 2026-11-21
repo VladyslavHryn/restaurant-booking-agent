@@ -1,0 +1,7 @@
+telethon>=1.36
+openai>=1.40
+python-dotenv>=1.0
+tzdata
+qrcode>=7.4
+edge-tts>=7.0
+imageio-ffmpeg>=0.5

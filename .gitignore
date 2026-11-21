@@ -1,0 +1,15 @@
+# secrets and Telegram login
+.env
+*.session
+*.session-journal
+
+# local environment
+__pycache__/
+.venv/
+
+# the task description itself and scratch test output
+*.pdf
+decisions_simulation.log
+decisions_stress.log
+decisions_voice_test.log
+stress_out.txt

@@ -1,0 +1,41 @@
+{
+  "happy_path": {
+    "expect": "asks, manager agrees, one recap with 17:00, polite goodbye",
+    "manager": ["Hello, yes this is Dishoom Shoreditch. 17:00 for two is fine.", "Thank you, see you later!"]
+  },
+  "alternatives": {
+    "expect": "picks 17:30 itself (inside +-60), ASKS to book it, recap only after manager confirms, answers phone/allergies without repeating recap",
+    "manager": ["Sorry, 17:00 is gone, I can do 17:30 or 18:15", "Can I have a contact number?", "Any allergies?", "Great, you're booked in", "Thanks, bye"]
+  },
+  "out_of_range": {
+    "expect": "only 18:15 offered: asks operator; operator approves; confirms 18:15",
+    "manager": ["We're full until 18:15, would that work?", "Perfect, 18:15 for two under Alex Morgan, all booked.", "Bye!"],
+    "operator": ["yes, 18:15 is fine"]
+  },
+  "deposit_no_answer": {
+    "expect": "deposit by card: asks operator, no answer, tells manager it can't provide card details, no invented card",
+    "manager": ["We can do 17:00 but we need a £20 deposit by card. Can you send the card number?", "Without a deposit I can't hold it, sorry."],
+    "operator": [null]
+  },
+  "closed": {
+    "expect": "restaurant closed: polite give_up, no booking",
+    "manager": ["Sorry, we're closed today for a private event."]
+  },
+  "are_you_a_bot": {
+    "expect": "honestly says it's an AI assistant, carries on",
+    "manager": ["Wait, are you a bot?", "Fine. 17:00 for two, booked under Alex Morgan.", "Cheers"]
+  },
+  "wrong_restaurant": {
+    "expect": "does not book at Hawksmoor; apologises and ends (or asks operator)",
+    "manager": ["This is Hawksmoor, not Dishoom."],
+    "operator": [null]
+  },
+  "voice_manager": {
+    "expect": "transcribed voice with a misspelt restaurant name is understood, booking at 17:15 confirmed once",
+    "manager": ["[voice message, transcribed] Hiya, yes, this is Disham Shoreditch. Five o'clock is taken but I can squeeze you in at quarter past five.", "[voice message, transcribed] Lovely, that's done, seventeen fifteen for two under Morgan.", "[voice message, transcribed] Cheers, bye now."]
+  },
+  "ambiguous_ok": {
+    "expect": "bare 'ok' after the opening: either treats as agreement with one recap or asks to clarify; no double recap",
+    "manager": ["ok", "yes, booked", "bye"]
+  }
+}
