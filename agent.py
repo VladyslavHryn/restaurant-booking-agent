@@ -60,6 +60,8 @@ TIME_FLEX = int(env("TIME_FLEX_MINUTES", "0"))  # may accept +-N minutes without
 PHONE = os.getenv("BOOKING_PHONE", "").strip()
 NOTES = os.getenv("GUEST_NOTES", "").strip()
 OPERATOR_TIMEOUT = int(env("OPERATOR_TIMEOUT_SECONDS", "90"))
+# On a server nobody answers the console: the agent then decides alone within the brief.
+NO_OPERATOR = os.getenv("NO_OPERATOR", "").lower() == "true" or not sys.stdin.isatty()
 # Voice replies: "mirror" = answer by voice once the manager has sent a voice message,
 # "always" = every message as a voice note, "off" = text only.
 VOICE_REPLIES = env("VOICE_REPLIES", "mirror").lower()
@@ -97,6 +99,13 @@ WRONG_PLACE_RULE = (f"If the manager says this chat is not {RESTAURANT}, apologi
                     "will not take up more of their time, and use \"give_up\"." if RESTAURANT else
                     "Whatever restaurant the manager names is the right one: book there.")
 
+OPERATOR_RULE = ("There is NO operator to ask in this run. Never use action \"ask_operator\" and never "
+                 "send holding lines like \"let me check\". If the manager asks for or proposes something "
+                 "outside the brief (a deposit, card details, another date, a time outside the acceptable "
+                 "range...), say politely in one line that you cannot agree to that or do not have it, and "
+                 "carry on with what the brief allows (or give up if nothing acceptable is left)."
+                 if NO_OPERATOR else "")
+
 SYSTEM_PROMPT = f"""You are an AI assistant booking a restaurant table on behalf of a guest, \
 chatting in Telegram with the restaurant's manager. Write polite, natural British English: \
 warm and courteous, concise (1-3 short sentences), no emoji, no lists.
@@ -113,6 +122,8 @@ THE BRIEF (the only facts you know and may state):
 - You are an AI assistant. If asked whether you are a bot or a person, say honestly you are an AI assistant.
 
 RULES
+0. {OPERATOR_RULE}
+0a. Waiting: if the manager says they need a moment or will check something ("let me check with the kitchen", "one sec"), do NOT reply at all: action "send" with an empty "reply", and wait for their next message. Never echo their words back.
 1. Never invent anything outside the brief: no phone numbers, emails, card details, allergies, \
 occasions, preferences. If the manager asks for or proposes something the brief does not cover \
 (a time outside the acceptable range, another date, another party size, a deposit, card details, \
@@ -538,6 +549,13 @@ async def converse(chat, operator, earlier: str = "") -> dict:
                 reply = re.sub(rf"\b{day}\b", NOW.strftime("%A"), reply, flags=re.I)
                 data = {**data, "reply": reply}
 
+            if action == "ask_operator" and NO_OPERATOR:
+                log("CHECK", "no operator in this run: not stalling, the model decides within the brief")
+                history.append({"role": "assistant", "content": json.dumps(data, ensure_ascii=False)})
+                history.append({"role": "user", "content":
+                                "SYSTEM: there is no operator. Do not send a holding line. Answer the "
+                                "manager directly: politely decline anything outside the brief."})
+                continue
             history.append({"role": "assistant", "content": json.dumps(data, ensure_ascii=False)})
             if reply:
                 await send(reply, und, dec)
@@ -565,9 +583,9 @@ async def converse(chat, operator, earlier: str = "") -> dict:
         log("INFO", "chat already has earlier messages: resuming from them")
         action = await step("START: this chat already has messages from an earlier run of you, the agent:\n"
                             f"{earlier}\n"
-                            "Continue this conversation naturally from where it stands: if the manager's last "
-                            "message is unanswered, answer it now (correct any mistake of yours in one short "
-                            "line, e.g. if you got the restaurant name wrong). Do not greet again.")
+                            "Continue this conversation naturally from where it stands. Do not greet again. If the "
+                            "manager's last message needs an answer, answer it; if they said they are checking "
+                            "something, send nothing (empty reply) and wait.")
     else:
         action = await step("START: write your opening message to the manager.")
     while action not in ("done", "give_up") and sent < MAX_AGENT_MESSAGES:

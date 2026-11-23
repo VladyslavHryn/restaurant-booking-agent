@@ -36,6 +36,7 @@ jobs:
       - name: Run the agent
         env:
           PYTHONUNBUFFERED: "1"
+          NO_OPERATOR: "true"
         run: python agent.py < /dev/null
       - name: Save the decision log
         if: always()
