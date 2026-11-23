@@ -1,0 +1,49 @@
+name: run booking agent
+
+# Runs the agent on GitHub's servers so it can wait for the manager's replies
+# without a laptop staying on. Start it from the Actions tab (or `gh workflow run`).
+# Secrets (encrypted, never printed):
+#   DOTENV          the full .env file (Telegram api id/hash, Groq key, brief)
+#   TG_SESSION_B64  base64 of agent_session.session (the agent's Telegram login)
+# No console here, so operator questions time out and the agent tells the manager
+# it does not have that information.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: booking-agent       # never two agents on one Telegram session
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore secrets
+        env:
+          DOTENV: ${{ secrets.DOTENV }}
+          TG_SESSION_B64: ${{ secrets.TG_SESSION_B64 }}
+        run: |
+          printf '%s\n' "$DOTENV" > .env
+          printf '%s' "$TG_SESSION_B64" | base64 -d > agent_session.session
+      - name: Run the agent
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: python agent.py < /dev/null
+      - name: Save the decision log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: decisions-log
+          path: decisions.log
+          if-no-files-found: warn
+      - name: Remove secrets from the runner
+        if: always()
+        run: rm -f .env agent_session.session
