@@ -49,7 +49,10 @@ MODEL = env("GROQ_MODEL", "openai/gpt-oss-120b")
 MODELS = [MODEL] + [m.strip() for m in os.getenv(
     "GROQ_FALLBACK_MODELS", "qwen/qwen3.8-27b,openai/gpt-oss-20b").split(",") if m.strip() and m.strip() != MODEL]
 
-RESTAURANT = env("RESTAURANT_NAME")
+# Optional: the task names no restaurant, so by default the agent takes the name from the manager.
+RESTAURANT = os.getenv("RESTAURANT_NAME", "").strip()
+RESTAURANT_DESC = RESTAURANT or ("the restaurant this manager runs. Its name is NOT known in advance: "
+                                 "learn it from the manager and use exactly that name")
 GUEST_NAME = env("BOOKING_NAME")
 PARTY = int(env("PARTY_SIZE", "2"))
 TIME = env("BOOKING_TIME", "17:00")
@@ -89,12 +92,17 @@ def flex_window() -> str:
     return f"any time from {lo // 60:02d}:{lo % 60:02d} to {hi // 60:02d}:{hi % 60:02d} (prefer the closest to {TIME})"
 
 
+CHECK_NAME = f"check you are speaking to {RESTAURANT}, " if RESTAURANT else ""
+WRONG_PLACE_RULE = (f"If the manager says this chat is not {RESTAURANT}, apologise for the mix-up, say you "
+                    "will not take up more of their time, and use \"give_up\"." if RESTAURANT else
+                    "Whatever restaurant the manager names is the right one: book there.")
+
 SYSTEM_PROMPT = f"""You are an AI assistant booking a restaurant table on behalf of a guest, \
 chatting in Telegram with the restaurant's manager. Write polite, natural British English: \
 warm and courteous, concise (1-3 short sentences), no emoji, no lists.
 
 THE BRIEF (the only facts you know and may state):
-- Restaurant: {RESTAURANT}, London
+- Restaurant: {RESTAURANT_DESC}, London
 - Date: today, {DATE_HUMAN} (ISO {DATE_ISO}). Current London time: {NOW:%H:%M} \
 (good morning before 12:00, good afternoon 12:00-18:00, good evening after).
 - Preferred time: {TIME}. Acceptable without checking with anyone: {flex_window()}.
@@ -117,7 +125,7 @@ brief and override it (if the operator approves 18:15, 18:15 is now acceptable; 
 2. If the manager offers several times, pick the one inside the acceptable range closest to \
 {TIME} and ASK them to book it ("17:30 would be lovely, could you book that for us, please?"). \
 Choosing a slot is not a confirmed booking: only the manager can confirm.
-3. Opening message: greet, check you are speaking to {RESTAURANT}, say you are an AI assistant \
+3. Opening message: greet, {CHECK_NAME}say you are an AI assistant \
 booking on behalf of a guest, and ask for a table for {PARTY} today at {TIME}.
 4. A bare "ok"/"yes" counts as agreement only when your last message asked one clear yes/no \
 question about the booking. Otherwise ask one short clarifying question.
@@ -134,8 +142,7 @@ If a transcription is unclear about a detail that matters, ask the manager to re
 could not make it out and ask them to say it again or type it. Never guess its content.
 6. Answer the manager's questions (phone, allergies, etc.) from the brief, briefly, in your own words.
 7. If no acceptable table is possible, use action "give_up" with a polite goodbye in "reply". \
-If the manager says this chat is not {RESTAURANT}, apologise for the mix-up, say you will not \
-take up more of their time, and use "give_up": do not book a different restaurant.
+{WRONG_PLACE_RULE}
 8. Once the booking is confirmed, when the manager wraps up (thanks, bye, see you), reply \
 with a brief courteous goodbye and use action "done".
 9. Language: open in English. If the manager writes in another language, reply in their \
@@ -170,7 +177,7 @@ Respond ONLY with one JSON object:
   "operator_question": "question for the operator, or empty string",
   "manager_confirmed": true | false,
   "manager_cancelled": true | false,
-  "booking": {{"date": "YYYY-MM-DD", "time": "HH:MM", "party_size": 2, "name": "..."}}
+  "booking": {{"restaurant": "restaurant name as the manager gave it, or empty", "date": "YYYY-MM-DD", "time": "HH:MM", "party_size": 2, "name": "..."}}
 }}
 "booking" always holds the details currently on the table (requested or agreed)."""
 
@@ -278,10 +285,15 @@ def check_booking(b: dict, operator_said: str) -> str | None:
     return None
 
 
+def place(b: dict | None) -> str:
+    """Restaurant name: from the brief if set, else as the manager gave it."""
+    return RESTAURANT or ((b or {}).get("restaurant") or "").strip()
+
+
 def recap(b: dict) -> str:
     party = int(b.get("party_size") or PARTY)
     words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
-    return (f"So that's a table for {words.get(party, party)} at {RESTAURANT} today, "
+    return (f"So that's a table for {words.get(party, party)} at {place(b) or 'your restaurant'} today, "
             f"{NOW:%A %d %B}, at {b['time']}, under the name {b.get('name') or GUEST_NAME}.")
 
 
@@ -313,7 +325,7 @@ def recap_complete(reply: str, b: dict) -> bool:
     today = ("today", "сегодня", "сьогодні", "heute", "hoy", "aujourd")
     if wrong_weekday(reply):
         return False
-    return (RESTAURANT.lower() in r
+    return ((not place(b) or place(b).lower() in r)
             and str(b.get("time")) in reply
             and (str(NOW.day) in r or any(w in r for w in today))
             and (str(party) in r or words.get(party, "#") in r))
@@ -355,6 +367,13 @@ class TelegramChannel:
         latest = await self.client.get_messages(self.peer, limit=1)
         self.last_id = latest[0].id if latest else 0
         self.manager_used_voice = False
+
+    async def transcript(self, limit: int = 20) -> str:
+        """Earlier messages in this chat (if a previous run was interrupted), oldest first."""
+        msgs = await self.client.get_messages(self.peer, limit=limit)
+        lines = [("AGENT: " if m.out else "MANAGER: ") + (m.message or "[voice or media]")
+                 for m in reversed(msgs) if not getattr(m, "action", None)]
+        return "\n".join(lines)
 
     async def send(self, text: str) -> str:
         """Send text, or a voice note per VOICE_REPLIES. Returns 'voice' or 'text'."""
@@ -439,7 +458,7 @@ class ScriptOperator:
 
 
 # --- the conversation ---------------------------------------------------------
-async def converse(chat, operator) -> dict:
+async def converse(chat, operator, earlier: str = "") -> dict:
     """Run one booking conversation. Returns stats used by the tests."""
     history: list[dict] = []
     operator_said = ""
@@ -492,7 +511,7 @@ async def converse(chat, operator) -> dict:
                         fix = await think(history + [
                             {"role": "assistant", "content": json.dumps(data, ensure_ascii=False)},
                             {"role": "user", "content": "SYSTEM CHECK: your confirmation reply must name "
-                             f"the restaurant ({RESTAURANT}), the day/date, the time ({b.get('time')}), the "
+                             f"the restaurant ({place(b) or 'as the manager named it'}), the day/date, the time ({b.get('time')}), the "
                              "number of people and the name. Rewrite the reply; keep everything else."}])
                         if recap_complete(fix.get("reply") or "", b):
                             reply = fix["reply"].strip()
@@ -540,9 +559,17 @@ async def converse(chat, operator) -> dict:
                                 "Tell the manager politely and continue without it, "
                                 "or decline if the booking cannot proceed without it."})
 
-    log("START", f"{RESTAURANT} | {DATE_HUMAN} {TIME} (flex +-{TIME_FLEX} min) | "
+    log("START", f"{RESTAURANT or 'restaurant named by the manager'} | {DATE_HUMAN} {TIME} (flex +-{TIME_FLEX} min) | "
                  f"party of {PARTY} | {GUEST_NAME} | chat @{MANAGER}")
-    action = await step("START: write your opening message to the manager.")
+    if earlier:
+        log("INFO", "chat already has earlier messages: resuming from them")
+        action = await step("START: this chat already has messages from an earlier run of you, the agent:\n"
+                            f"{earlier}\n"
+                            "Continue this conversation naturally from where it stands: if the manager's last "
+                            "message is unanswered, answer it now (correct any mistake of yours in one short "
+                            "line, e.g. if you got the restaurant name wrong). Do not greet again.")
+    else:
+        action = await step("START: write your opening message to the manager.")
     while action not in ("done", "give_up") and sent < MAX_AGENT_MESSAGES:
         text = await chat.receive(AFTER_CONFIRM_IDLE if booking else None)
         if text is None:
@@ -551,7 +578,7 @@ async def converse(chat, operator) -> dict:
         log("MANAGER", text)
         action = await step(f"MANAGER: {text}{language_hint(text)}")
 
-    result = (f"CONFIRMED: {RESTAURANT}, {booking.get('date') or DATE_ISO} {booking['time']}, "
+    result = (f"CONFIRMED: {place(booking)}, {booking.get('date') or DATE_ISO} {booking['time']}, "
               f"party of {booking.get('party_size') or PARTY}, {booking.get('name') or GUEST_NAME}"
               if booking else "no booking")
     log("END", f"{result} | {sent} messages sent | last action: {action}")
@@ -579,7 +606,7 @@ async def main() -> None:
     chat = TelegramChannel()
     await chat.open()
     try:
-        await converse(chat, Operator(asyncio.get_running_loop()))
+        await converse(chat, Operator(asyncio.get_running_loop()), await chat.transcript())
     finally:
         await chat.close()
 
