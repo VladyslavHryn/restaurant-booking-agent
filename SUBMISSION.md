@@ -1,6 +1,6 @@
 # Здача: агент, який бронює столик
 
-- **Переписка:** скріншот додано до повідомлення; текст — у [`chat_transcript.md`](chat_transcript.md) (фінальна розмова з @vlad_dev_7, 23.11)
+- **Переписка:** скріншоти [`screenshots/chat_1.png`](screenshots/chat_1.png), [`screenshots/chat_2.png`](screenshots/chat_2.png); текст — у [`chat_transcript.md`](chat_transcript.md) (фінальна розмова з @vlad_dev_7, 23.11)
 - **Код:** https://github.com/VladyslavHryn/restaurant-booking-agent
 - **Лог рішень:** [`decisions.log`](decisions.log). Його пише сам агент, по рядку на кожне повідомлення: що надіслав або отримав, що зрозумів, що вирішив.
 
